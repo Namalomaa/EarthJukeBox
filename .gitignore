@@ -1,2 +1,7 @@
+# Large NASA source files
 data/raw/
-data/video/iss_lightning_sos_yearly_07312023_2048p60.mp4
+data/video/*.mp4
+
+# Python cache
+__pycache__/
+.venv/
