@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Earthsonic · Musical proof of concept</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:#081120;color:#f2f8ff;margin:0;padding:24px}main{max-width:980px;margin:auto}h1{font-size:clamp(27px,4vw,42px);margin:0 0 8px}p{line-height:1.55;color:#aebcd2}.eyebrow{color:#66e8d3;font-size:12px;letter-spacing:.17em;font-weight:800}.shell{background:#111e31;border:1px solid #293b53;border-radius:18px;padding:20px;margin-top:18px}canvas{display:block;width:100%;height:auto;aspect-ratio:2/1;border-radius:12px;background:#09172b}button{background:#62e2cd;color:#06161d;font-weight:800;border:0;padding:13px 21px;border-radius:10px;cursor:pointer;font-size:15px}button.secondary{background:#273c56;color:white}button:disabled{opacity:.5;cursor:not-allowed}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}.meta div{background:#0b1728;padding:13px;border-radius:9px}.meta strong{display:block;font-size:19px;margin-top:6px}.meta span{font-size:12px;color:#98acc6}.progress{height:9px;background:#26334b;border-radius:20px;margin-top:18px;overflow:hidden}.progress div{width:0;height:100%;background:#65ead1;transition:width .08s linear}#status{font-size:13px;color:#a1eecf}details{margin-top:16px;color:#b9cadd}details video{max-width:100%;max-height:300px;margin-top:10px}code{color:#80dcc8}.explain{font-size:13px}
+</style></head><body><main>
+<div class="eyebrow">EARTHSONIC · REAL NASA LIGHTNING OBSERVATIONS</div>
+<h1>When lightning becomes music.</h1>
+<p>A 30-second musical proof of concept using your 21,062 detected ISS LIS flashes. Not a beep test: melody, harmony, bass and soft percussion are generated from scientific measurements.</p>
+<section class="shell"><div class="row"><button id="play" disabled>▶ Play the lightning composition</button><button id="stop" class="secondary" disabled>■ Stop</button><span id="status">Loading NASA data and Tone.js…</span></div>
+<div class="progress"><div id="bar"></div></div>
+<div class="meta"><div><span>OBSERVATION WINDOW</span><strong id="date">—</strong></div><div><span>FLASHES IN THIS MUSICAL SECTION</span><strong id="count">—</strong></div><div><span>RELATIVE ACTIVITY</span><strong id="energy">—</strong></div></div>
+<canvas id="map" width="1200" height="600" aria-label="Animated longitude-latitude map of observed NASA lightning flashes"></canvas>
+<p class="explain">Dots show sampled detected flash locations in the current musical section. This is a longitude–latitude plotting grid, not a global lightning coverage map. A quieter section means fewer detections in this sample—not necessarily less lightning on Earth.</p></section>
+<section class="shell"><strong>What the data controls</strong><p class="explain">Flash count → rhythmic density · Latitude → melody pitch · Longitude → spatial interpretation for later stereo work · Radiance → melody intensity. A consistent C-major/A-minor harmonic progression keeps the result musical.</p><p class="explain"><strong>Important:</strong> This prototype compresses your March 1–12, 2017 observations into 30 seconds. It is <em>not</em> synchronized to the complete NASA 2017–2023 movie. This is intentional: we are validating the musical approach first.</p>
+<details><summary>Show NASA's reference movie (independent playback)</summary><video controls preload="none" src="../data/video/iss_lightning_sos_yearly_07312023_2048p60.mp4"></video><p class="explain">The reference movie spans multiple years. Do not interpret its current image as the sound's corresponding day.</p></details></section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+<script type="module">
+import {buildMusicalScore} from '../sonification/musicalMapping.js';
+import {createMusicEngine} from './musicEngine.js';
+const $=id=>document.getElementById(id);const canvas=$('map'),ctx=canvas.getContext('2d');
+let score,engine,currentSegment=-1;
+function draw(seg){const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#0b1c32';ctx.fillRect(0,0,w,h);
+ctx.lineWidth=1;ctx.strokeStyle='#21425b';for(let longitude=-180;longitude<=180;longitude+=30){const x=(longitude+180)/360*w;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+for(let latitude=-90;latitude<=90;latitude+=30){const y=(90-latitude)/180*h;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+ctx.font='15px system-ui';ctx.fillStyle='#6489a7';ctx.fillText('180°W',12,h-12);ctx.fillText('0°',w/2+9,h-12);ctx.fillText('180°E',w-77,h-12);
+if(!seg)return;
+for(const f of seg.sample){let x=(Number(f.longitude)+180)/360*w,y=(90-Number(f.latitude))/180*h;
+const brightness=Math.min(1,Math.log1p(Math.max(0,Number(f.radiance)||0))/15);ctx.beginPath();ctx.arc(x,y,3+brightness*4,0,Math.PI*2);ctx.fillStyle=`rgba(118,235,210,${.35+brightness*.55})`;ctx.fill();}
+}
+function update(s){$('bar').style.width=(s/score.totalSeconds*100)+'%';const i=Math.min(score.segments.length-1,Math.floor(s/2));if(i===currentSegment)return;currentSegment=i;const seg=score.segments[i];
+$('date').textContent=seg.date.slice(0,10);$('count').textContent=seg.count.toLocaleString();$('energy').textContent=Math.round(seg.energy*100)+'%';draw(seg);}
+function resetButtons(){ $('play').disabled=false;$('stop').disabled=true;$('play').textContent='▶ Play again';}
+try{if(!window.Tone)throw Error('Tone.js could not load. Check your internet connection.');const response=await fetch('../data/processed/lightning.json');if(!response.ok)throw Error('Cannot load ../data/processed/lightning.json');const json=await response.json();score=buildMusicalScore(json.flashes);engine=createMusicEngine(window.Tone);
+$('status').textContent=`Ready · ${score.totalFlashes.toLocaleString()} flashes · ${score.totalSeconds}s · 120 BPM`;update(0);$('play').disabled=false;
+$('play').addEventListener('click',async()=>{try{$('play').disabled=true;$('stop').disabled=false;$('status').textContent='Playing NASA-driven musical composition';await engine.play(score,{onTick:update,onFinish:()=>{$('status').textContent='Finished · replay or adjust the musical mapping';resetButtons();}});}catch(e){$('status').textContent=e.message;resetButtons();}});
+$('stop').addEventListener('click',()=>{engine.stop();currentSegment=-1;update(0);$('status').textContent='Stopped';resetButtons();});
+}catch(e){$('status').textContent='Error: '+e.message;console.error(e)}
+</script></body></html>

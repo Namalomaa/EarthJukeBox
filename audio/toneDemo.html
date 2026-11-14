@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ASTRO GEEKS — NASA Lightning Audio Demo</title>
+<style>
+  body { font: 16px/1.5 system-ui,sans-serif; background:#0d1424; color:#f4f6fb; max-width:750px; margin:5vh auto; padding:20px; }
+  button { font:inherit; cursor:pointer; background:#9fe4ec; color:#09101a; border:0; border-radius:9px; padding:12px 20px; margin:8px 8px 8px 0; }
+  button:disabled { opacity:.5; cursor:not-allowed; } pre { white-space:pre-wrap; background:#1b2940; padding:18px; border-radius:12px; }
+  small { color:#aabbd5; } h1 { font-size:1.65rem; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+</head>
+<body>
+<h1>⚡ ASTRO GEEKS — Lightning sonification prototype</h1>
+<p>Plays actual detections from <code>data/processed/lightning.json</code> using Rawaa's mapping functions and Tone.js.</p>
+<button id="play" disabled>▶ Play NASA lightning</button>
+<button id="stop" disabled>■ Stop</button>
+<pre id="status">Loading data…</pre>
+<small>Prototype: compresses each populated 10-minute window into 2 seconds, with at most 12 notes per window. This is not yet synchronized to NASA's video. Needs an internet connection to load Tone.js CDN.</small>
+<script type="module">
+import { createEvents } from '../sonification/createEvents.js';
+const status = document.getElementById('status');
+const play = document.getElementById('play');
+const stop = document.getElementById('stop');
+let prepared;
+let channels;
+const transport = () => Tone.Transport;
+
+function getChannels() {
+  if (channels) return channels;
+  channels = [-1, -.5, 0, .5, 1].map(pan => {
+    const panner = new Tone.Panner(pan).toDestination();
+    const synth = new Tone.PolySynth(Tone.Synth).connect(panner);
+    synth.volume.value = -11;
+    return synth;
+  });
+  return channels;
+}
+function stopPlayback() {
+  transport().stop();
+  transport().cancel(0);
+  if (channels) channels.forEach(s => s.releaseAll());
+  play.disabled = false;
+  stop.disabled = true;
+  status.textContent = `${prepared.events.length} musical events ready. Playback stopped.`;
+}
+try {
+  const response = await fetch('../data/processed/lightning.json');
+  if (!response.ok) throw new Error(`Couldn't load lightning.json (HTTP ${response.status})`);
+  const data = await response.json();
+  prepared = createEvents(data);
+  if (typeof Tone === 'undefined') throw new Error('Tone.js CDN failed to load (check internet connection).');
+  status.textContent = `NASA flashes: ${prepared.flashCount}\nWindows: ${prepared.windowCount}\nMusical events: ${prepared.events.length}\nPlayback duration: ${prepared.totalDuration}s\n\nReady: click Play.`;
+  play.disabled = prepared.events.length === 0;
+} catch (err) { status.textContent = `Error: ${err.message}\nRun python3 -m http.server 8000 from the repository root.`; }
+
+play.addEventListener('click', async () => {
+  try {
+    await Tone.start(); // required by browser audio policies
+    stopPlayback();
+    const synths = getChannels();
+    const t = transport();
+    prepared.events.forEach(event => {
+      t.scheduleOnce(time => {
+        const channelIndex = Math.max(0, Math.min(4, Math.round((event.pan + 1) * 2)));
+        synths[channelIndex].triggerAttackRelease(event.pitchHz, event.duration, time, event.velocity);
+      }, event.startTime);
+    });
+    t.scheduleOnce(() => { stopPlayback(); }, prepared.totalDuration + 0.3);
+    t.start('+0.1', 0);
+    play.disabled = true;
+    stop.disabled = false;
+    status.textContent = `Playing ${prepared.events.length} musical notes from ${prepared.flashCount} NASA observations…`;
+  } catch (err) { status.textContent = `Playback error: ${err.message}`; stopPlayback(); }
+});
+stop.addEventListener('click', stopPlayback);
+</script>
+</body>
+</html>

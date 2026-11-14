@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Earthsonic — NASA video sync test</title>
+<style>
+body{font:16px system-ui,Arial;background:#0a1021;color:#ecf4ff;margin:0;padding:24px;max-width:1100px;margin-inline:auto}
+h1{font-size:1.5rem}video{width:100%;max-height:70vh;background:black;border-radius:12px}
+.panel{background:#19243b;border:1px solid #304366;border-radius:12px;padding:16px;margin:12px 0}
+button{background:#42b9dd;color:#07121b;padding:10px 16px;border:0;border-radius:8px;cursor:pointer;font-weight:700}
+button:disabled{opacity:.45;cursor:not-allowed}.small{color:#b7c9d9;font-size:.87rem}#date{font-weight:700;font-size:1.3rem}
+</style>
+</head>
+<body>
+<h1>Earthsonic · NASA video–lightning synchronization test</h1>
+<video id="video" controls preload="metadata">
+<source src="../data/video/iss_lightning_sos_yearly_07312023_2048p60.mp4" type="video/mp4">
+Your browser does not support MP4 playback.
+</video>
+<div class="panel">
+<div id="status">Loading NASA labels and processed lightning data…</div>
+<p><span class="small">NASA label (UTC): </span><span id="date">—</span></p>
+<p><span class="small">Frame number: </span><span id="frame">—</span></p>
+<p><span class="small">Flashes detected in preceding 10 days: </span><strong id="count">—</strong></p>
+<p class="small" id="note"></p>
+<button id="sound" disabled>Enable sound cues</button>
+<p class="small">Sound cues here are a temporary sync test, not Rawaa’s final sonification or Saba’s Tone.js audio engine.</p>
+</div>
+<script>
+const fps = 60;
+const video = document.getElementById('video');
+const status = document.getElementById('status');
+const dateEl = document.getElementById('date');
+const countEl = document.getElementById('count');
+const frameEl = document.getElementById('frame');
+const noteEl = document.getElementById('note');
+const soundBtn = document.getElementById('sound');
+let labels = [], flashTimes = [], audioCtx, soundEnabled = false, lastCueBucket = -1;
+const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+function parseLabel(line) {
+  const match = line.trim().match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!match || months[match[2]] === undefined) return null;
+  let year = Number(match[3]);
+  // NASA's supplied labels switch to "2003" after 2022. Treat as provisional 2023.
+  if (year === 2003) year = 2023;
+  return new Date(Date.UTC(year,months[match[2]],+match[1],+match[4],+match[5]));
+}
+function lowerBound(array, value) {
+  let lo=0,hi=array.length;
+  while(lo<hi) {let mid=(lo+hi)>>1;if(array[mid]<value)lo=mid+1;else hi=mid;}
+  return lo;
+}
+function soundCue(count) {
+  if(!audioCtx || !soundEnabled) return;
+  const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();
+  osc.type='sine';osc.frequency.value=220 + Math.min(700,Math.log1p(count)*85);
+  gain.gain.setValueAtTime(0.0001,audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.045,audioCtx.currentTime+0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+0.15);
+  osc.connect(gain).connect(audioCtx.destination);osc.start();osc.stop(audioCtx.currentTime+0.16);
+}
+function update() {
+  if(!labels.length) return;
+  const index=Math.min(Math.floor(video.currentTime*fps),labels.length-1);
+  const date=labels[index];
+  frameEl.textContent=`${index+1} of ${labels.length} labels (video has 6002 frames)`;
+  if(!date){dateEl.textContent='Unrecognized label';return;}
+  dateEl.textContent=date.toISOString().replace('T',' ').replace('.000Z',' UTC');
+  const end=date.getTime(),start=end-10*24*60*60*1000;
+  const first=flashTimes[0],last=flashTimes[flashTimes.length-1];
+  if(end<first || start>last) {
+    countEl.textContent='No downloaded observations for this window';
+    noteEl.textContent='This date is outside your March 1–12 sample. Do not interpret as zero lightning.';
+    return;
+  }
+  const count=lowerBound(flashTimes,end)-lowerBound(flashTimes,start);
+  countEl.textContent=count.toLocaleString('en-US');
+  const completeByDates=(start>=Date.UTC(2017,2,1) && end<=Date.UTC(2017,2,12,1,6));
+  noteEl.textContent=completeByDates
+    ? '10-day interval is within your downloaded period. Counts are detected flashes, not globally normalized lightning activity.'
+    : 'PARTIAL DATA: this 10-day interval extends beyond the dates you downloaded. Count is incomplete.';
+  // One short audio cue for each new 1-second segment of playback, during available scientific data.
+  const bucket=Math.floor(video.currentTime);
+  if(!video.paused && soundEnabled && bucket!==lastCueBucket) {lastCueBucket=bucket;soundCue(count);}
+}
+Promise.all([
+ fetch('../data/video/labels.txt').then(r=>{if(!r.ok)throw Error('Cannot load labels.txt');return r.text()}),
+ fetch('../data/processed/lightning.json').then(r=>{if(!r.ok)throw Error('Cannot load lightning.json');return r.json()})
+]).then(([text,data])=>{
+  labels=text.split(/\r?\n/).filter(Boolean).map(parseLabel);
+  flashTimes=(data.flashes||[]).map(f=>Date.parse(f.time)).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(labels.length!==6001)throw Error(`Expected 6001 labels; got ${labels.length}`);
+  if(!flashTimes.length)throw Error('No flashes in lightning.json');
+  status.textContent=`Ready: ${labels.length} labels, ${flashTimes.length.toLocaleString()} observed flashes. Play or scrub the video.`;
+  soundBtn.disabled=false;update();
+}).catch(error=>status.textContent=`Error: ${error.message}. Start the server at the EarthJukeBox project root.`);
+video.addEventListener('timeupdate',update);
+video.addEventListener('seeked',()=>{lastCueBucket=-1;update()});
+video.addEventListener('play',()=>{lastCueBucket=-1;update()});
+soundBtn.addEventListener('click',async()=>{
+  if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  await audioCtx.resume();soundEnabled=!soundEnabled;
+  soundBtn.textContent=soundEnabled?'Disable sound cues':'Enable sound cues';
+  lastCueBucket=-1;
+});
+</script>
+</body></html>
